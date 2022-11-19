@@ -10,7 +10,7 @@ import gc
 import torch
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
-import torchvision.datasets as vdsets
+import torchvision.datasets as vdsets, ImageFolder
 
 from lib.resflow import ACT_FNS, ResidualFlow
 import lib.datasets as datasets
@@ -360,16 +360,21 @@ elif args.data == 'imagenet32':
     if args.imagesize != 32:
         logger.info('Changing image size to 32.')
         args.imagesize = 32
+    #TODO change dataloaders to load tiny imagenet from folder
     train_loader = torch.utils.data.DataLoader(
-        datasets.Imagenet32(train=True, transform=transforms.Compose([
+        ImageFolder(path='/Users/sepehr/Desktop/UNI/Codes/OOD_project/residual-flows/datasets/imagenet/32x32/train', transform=transforms.Compose([
             add_noise,
         ])), batch_size=args.batchsize, shuffle=True, num_workers=args.nworkers
     )
     test_loader = torch.utils.data.DataLoader(
-        datasets.Imagenet32(train=False, transform=transforms.Compose([
+        ImageFolder(path='/Users/sepehr/Desktop/UNI/Codes/OOD_project/residual-flows/datasets/imagenet/32x32/val_id_v1', transform=transforms.Compose([
             add_noise,
         ])), batch_size=args.val_batchsize, shuffle=False, num_workers=args.nworkers
     )
+
+    print(train_loader)
+    print(test_loader)
+
 elif args.data == 'imagenet64':
     im_dim = 3
     init_layer = layers.LogitTransform(0.05)
@@ -389,7 +394,7 @@ elif args.data == 'imagenet64':
 
 if args.task in ['classification', 'hybrid']:
     try:
-        n_classes
+        n_classes #TODO why imagenet dont set n_classes ?
     except NameError:
         raise ValueError('Cannot perform classification with {}'.format(args.data))
 else:
