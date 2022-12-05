@@ -20,8 +20,8 @@ class ResidualFlow(nn.Module):
     def __init__(
         self,
         input_size,
-        n_blocks=[16, 16],
-        intermediate_dim=64,
+        n_blocks=[10],
+        intermediate_dim=640,
         factor_out=True,
         quadratic=False,
         init_layer=None,
@@ -29,7 +29,7 @@ class ResidualFlow(nn.Module):
         fc_actnorm=False,
         batchnorm=False,
         dropout=0,
-        fc=False,
+        fc=True,#False,
         coeff=0.9,
         vnorms='122f',
         n_lipschitz_iters=None,
@@ -40,7 +40,7 @@ class ResidualFlow(nn.Module):
         n_samples=1,
         kernels='3-1-3',
         activation_fn='elu',
-        fc_end=True,
+        fc_end=False,#True,
         fc_idim=128,
         n_exact_terms=0,
         preact=False,
@@ -91,23 +91,35 @@ class ResidualFlow(nn.Module):
         if not self.n_scale > 0:
             raise ValueError('Could not compute number of scales for input of' 'size (%d,%d,%d,%d)' % input_size)
 
-        self.transforms = self._build_net(input_size)
+        #TODO add a wide resnet with lipnormalization (using _getlipschitz function)
+        #TODO then move classification head below from end of flow network to end of
+        #TODO resnet and modify the forward and inverse process
+        #TODO inverse is not needed for resnet and classification head and is only for flow network
 
-        self.dims = [o[1:] for o in self.calc_output_size(input_size)]
+        wrn_output_size, self.backbone = self._build_normalized_wrn(input_size)
+
+        self.transforms = self._build_flow_net(wrn_output_size) #TODO change input size to output size of added wide-resnet
+
+        self.dims = [o[1:] for o in self.calc_output_size(wrn_output_size)]
 
         if self.classification:
-            self.build_multiscale_classifier(input_size)
+            self.build_multiscale_classifier(wrn_output_size) #TODO change input size to output size of added wide-resnet
 
-    def _build_net(self, input_size):
-        _, c, h, w = input_size
+
+    def _build_normalized_wrn(self, input_size):
+        backbone = layers.Wide_ResNet(depth=28, widen_factor=10, dropout_rate=0, num_classes=640) # it is spectral normalized
+        return 640, backbone
+
+    def _build_flow_net(self, input_size):
+        #_, c, h, w = input_size
         transforms = []
         _stacked_blocks = StackediResBlocks if self.block_type == 'resblock' else StackedCouplingBlocks
         for i in range(self.n_scale):
             transforms.append(
                 _stacked_blocks(
-                    initial_size=(c, h, w),
+                    initial_size=input_size,#(c, h, w),
                     idim=self.intermediate_dim,
-                    squeeze=(i < self.n_scale - 1),  # don't squeeze last layer
+                    squeeze=False,#(i < self.n_scale - 1),  # don't squeeze last layer
                     init_layer=self.init_layer if i == 0 else None,
                     n_blocks=self.n_blocks[i],
                     quadratic=self.quadratic,
@@ -190,6 +202,7 @@ class ResidualFlow(nn.Module):
     def forward(self, x, logpx=None, inverse=False, classify=False):
         if inverse:
             return self.inverse(x, logpx)
+        x = self.backbone(x)
         out = []
         if classify: class_outs = []
         for idx in range(len(self.transforms)):
@@ -281,7 +294,7 @@ class StackediResBlocks(layers.SequentialFlow):
         fc_nblocks=4,
         fc_idim=128,
         n_exact_terms=0,
-        preact=False,
+        preact=True,#False,
         neumann_grad=True,
         grad_in_forward=False,
         first_resblock=False,
@@ -319,23 +332,44 @@ class StackediResBlocks(layers.SequentialFlow):
 
         def _resblock(initial_size, fc, idim=idim, first_resblock=False):
             if fc:
+                # nnet = FCNet(
+                #         input_shape=initial_size,
+                #         idim=idim,
+                #         lipschitz_layer=_lipschitz_layer(True),
+                #         nhidden=len(kernels.split('-')) - 1,
+                #         coeff=coeff,
+                #         domains=domains,
+                #         codomains=codomains,
+                #         n_iterations=n_lipschitz_iters,
+                #         activation_fn=activation_fn,
+                #         preact=preact,
+                #         dropout=dropout,
+                #         sn_atol=sn_atol,
+                #         sn_rtol=sn_rtol,
+                #         learn_p=learn_p,
+                #     )
+                nnet = []
+                if not first_resblock and preact:
+                    if batchnorm: nnet.append(layers.MovingBatchNorm2d(initial_size[0]))
+                    nnet.append(ACT_FNS[activation_fn](False))
+                nnet.append(
+                    _lipschitz_layer(fc)(initial_size, idim)
+                )
+                if batchnorm: nnet.append(layers.MovingBatchNorm2d(idim))
+                nnet.append(ACT_FNS[activation_fn](True))
+                nnet.append(
+                    _lipschitz_layer(fc)(idim, idim)
+                )
+                if batchnorm: nnet.append(layers.MovingBatchNorm2d(idim))
+                nnet.append(ACT_FNS[activation_fn](True))
+                if dropout: nnet.append(nn.Dropout2d(dropout, inplace=True))
+                nnet.append(
+                    _lipschitz_layer(fc)(idim, initial_size)
+                )
+                if batchnorm: nnet.append(layers.MovingBatchNorm2d(initial_size[0]))
+
                 return layers.iResBlock(
-                    FCNet(
-                        input_shape=initial_size,
-                        idim=idim,
-                        lipschitz_layer=_lipschitz_layer(True),
-                        nhidden=len(kernels.split('-')) - 1,
-                        coeff=coeff,
-                        domains=domains,
-                        codomains=codomains,
-                        n_iterations=n_lipschitz_iters,
-                        activation_fn=activation_fn,
-                        preact=preact,
-                        dropout=dropout,
-                        sn_atol=sn_atol,
-                        sn_rtol=sn_rtol,
-                        learn_p=learn_p,
-                    ),
+                    nn.Sequential(*nnet),#nnet,
                     n_power_series=n_power_series,
                     n_dist=n_dist,
                     n_samples=n_samples,

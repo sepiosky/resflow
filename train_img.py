@@ -360,7 +360,6 @@ elif args.data == 'imagenet32':
     if args.imagesize != 32:
         logger.info('Changing image size to 32.')
         args.imagesize = 32
-    #TODO change dataloaders to load tiny imagenet from folder
     train_loader = torch.utils.data.DataLoader(
         ImageFolder(path='/Users/sepehr/Desktop/UNI/Codes/OOD_project/residual-flows/datasets/imagenet/32x32/train', transform=transforms.Compose([
             add_noise,
@@ -371,9 +370,6 @@ elif args.data == 'imagenet32':
             add_noise,
         ])), batch_size=args.val_batchsize, shuffle=False, num_workers=args.nworkers
     )
-
-    print(train_loader)
-    print(test_loader)
 
 elif args.data == 'imagenet64':
     im_dim = 3
