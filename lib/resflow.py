@@ -331,6 +331,13 @@ class StackediResBlocks(layers.SequentialFlow):
             return base_layers.get_linear if fc else base_layers.get_conv2d
 
         def _resblock(initial_size, fc, idim=idim, first_resblock=False):
+            ks = list(map(int, kernels.split('-')))
+            if learn_p:
+                _domains = [nn.Parameter(torch.tensor(0.)) for _ in range(len(ks))]
+                _codomains = _domains[1:] + [_domains[0]]
+            else:
+                _domains = domains
+                _codomains = codomains
             if fc:
                 # nnet = FCNet(
                 #         input_shape=initial_size,
@@ -353,18 +360,21 @@ class StackediResBlocks(layers.SequentialFlow):
                     if batchnorm: nnet.append(layers.MovingBatchNorm2d(initial_size[0]))
                     nnet.append(ACT_FNS[activation_fn](False))
                 nnet.append(
-                    _lipschitz_layer(fc)(initial_size, idim)
+                    _lipschitz_layer(fc)(initial_size, idim, coeff=coeff, n_iterations=n_lipschitz_iters,
+                        domain=_domains[0], codomain=_codomains[0], atol=sn_atol, rtol=sn_rtol)
                 )
                 if batchnorm: nnet.append(layers.MovingBatchNorm2d(idim))
                 nnet.append(ACT_FNS[activation_fn](True))
                 nnet.append(
-                    _lipschitz_layer(fc)(idim, idim)
+                    _lipschitz_layer(fc)(idim, idim, coeff=coeff, n_iterations=n_lipschitz_iters,
+                            domain=_domains[i + 1], codomain=_codomains[i + 1], atol=sn_atol, rtol=sn_rtol)
                 )
                 if batchnorm: nnet.append(layers.MovingBatchNorm2d(idim))
                 nnet.append(ACT_FNS[activation_fn](True))
                 if dropout: nnet.append(nn.Dropout2d(dropout, inplace=True))
                 nnet.append(
-                    _lipschitz_layer(fc)(idim, initial_size)
+                    _lipschitz_layer(fc)(idim, initial_size, coeff=coeff, n_iterations=n_lipschitz_iters,
+                        domain=_domains[-1], codomain=_codomains[-1], atol=sn_atol, rtol=sn_rtol)
                 )
                 if batchnorm: nnet.append(layers.MovingBatchNorm2d(initial_size[0]))
 
@@ -378,13 +388,6 @@ class StackediResBlocks(layers.SequentialFlow):
                     grad_in_forward=grad_in_forward,
                 )
             else:
-                ks = list(map(int, kernels.split('-')))
-                if learn_p:
-                    _domains = [nn.Parameter(torch.tensor(0.)) for _ in range(len(ks))]
-                    _codomains = _domains[1:] + [_domains[0]]
-                else:
-                    _domains = domains
-                    _codomains = codomains
                 nnet = []
                 if not first_resblock and preact:
                     if batchnorm: nnet.append(layers.MovingBatchNorm2d(initial_size[0]))
