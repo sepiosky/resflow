@@ -55,7 +55,7 @@ parser.add_argument('--neumann-grad', type=eval, choices=[True, False], default=
 parser.add_argument('--mem-eff', type=eval, choices=[True, False], default=True)
 
 parser.add_argument('--act', type=str, choices=ACT_FNS.keys(), default='swish')
-parser.add_argument('--idim', type=int, default=512)
+parser.add_argument('--idim', type=int, default=640)
 parser.add_argument('--nblocks', type=str, default='16-16-16')
 parser.add_argument('--squeeze-first', type=eval, default=False, choices=[True, False])
 parser.add_argument('--actnorm', type=eval, default=True, choices=[True, False])
@@ -96,7 +96,7 @@ parser.add_argument('--resume', type=str, default=None)
 parser.add_argument('--begin-epoch', type=int, default=0)
 
 parser.add_argument('--nworkers', type=int, default=4)
-parser.add_argument('--print-freq', help='Print progress every so iterations', type=int, default=20)
+parser.add_argument('--print-freq', help='Print progress every so iterations', type=int, default=1)
 parser.add_argument('--vis-freq', help='Visualize progress every so iterations', type=int, default=500)
 args = parser.parse_args()
 
@@ -356,17 +356,20 @@ elif args.data == 'celeba_5bit':
     )
 elif args.data == 'imagenet32':
     im_dim = 3
+    n_classes = 10
     init_layer = layers.LogitTransform(0.05)
     if args.imagesize != 32:
         logger.info('Changing image size to 32.')
         args.imagesize = 32
     train_loader = torch.utils.data.DataLoader(
-        vdsets.ImageFolder(path='/Users/sepehr/Desktop/UNI/Codes/OOD_project/residual-flows/datasets/imagenet/32x32/train', transform=transforms.Compose([
+        vdsets.ImageFolder(root='/Users/sepehr/Desktop/UNI/Codes/OOD_project/residual-flows/datasets/imagenet/32x32/train', transform=transforms.Compose([
+            transforms.ToTensor(),
             add_noise,
         ])), batch_size=args.batchsize, shuffle=True, num_workers=args.nworkers
     )
     test_loader = torch.utils.data.DataLoader(
-        vdsets.ImageFolder(path='/Users/sepehr/Desktop/UNI/Codes/OOD_project/residual-flows/datasets/imagenet/32x32/val_id_v1', transform=transforms.Compose([
+        vdsets.ImageFolder(root='/Users/sepehr/Desktop/UNI/Codes/OOD_project/residual-flows/datasets/imagenet/32x32/val_id_v1', transform=transforms.Compose([
+            transforms.ToTensor(),
             add_noise,
         ])), batch_size=args.val_batchsize, shuffle=False, num_workers=args.nworkers
     )
@@ -429,7 +432,7 @@ model = ResidualFlow(
     n_samples=args.n_samples,
     kernels=args.kernels,
     activation_fn=args.act,
-    fc_end=args.fc_end,
+    fc_end=False,#args.fc_end,
     fc_idim=args.fc_idim,
     n_exact_terms=args.n_exact_terms,
     preact=args.preact,
@@ -684,8 +687,8 @@ def train(epoch, model):
                 s += ' | CE {ce_meter.avg:.4f} | Acc {0:.4f}'.format(100 * correct / total, ce_meter=ce_meter)
 
             logger.info(s)
-        if i % args.vis_freq == 0:
-            visualize(epoch, model, i, x)
+        #if i % args.vis_freq == 0:
+        #    visualize(epoch, model, i, x)
 
         del x
         torch.cuda.empty_cache()

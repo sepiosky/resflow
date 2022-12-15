@@ -49,7 +49,7 @@ class ResidualFlow(nn.Module):
         first_resblock=False,
         learn_p=False,
         classification=False,
-        classification_hdim=64,
+        classification_hdim=640,
         n_classes=10,
         block_type='resblock',
     ):
@@ -91,23 +91,18 @@ class ResidualFlow(nn.Module):
         if not self.n_scale > 0:
             raise ValueError('Could not compute number of scales for input of' 'size (%d,%d,%d,%d)' % input_size)
 
-        #TODO add a wide resnet with lipnormalization (using _getlipschitz function)
-        #TODO then move classification head below from end of flow network to end of
-        #TODO resnet and modify the forward and inverse process
-        #TODO inverse is not needed for resnet and classification head and is only for flow network
-
         wrn_output_size, self.backbone = self._build_normalized_wrn(input_size)
 
         self.transforms = self._build_flow_net(wrn_output_size) #TODO change input size to output size of added wide-resnet
 
-        self.dims = [o[1:] for o in self.calc_output_size(wrn_output_size)]
+        #self.dims = [o[1:] for o in self.calc_output_size(wrn_output_size)]
 
         if self.classification:
             self.build_multiscale_classifier(wrn_output_size) #TODO change input size to output size of added wide-resnet
 
 
     def _build_normalized_wrn(self, input_size):
-        backbone = layers.Wide_ResNet(depth=28, widen_factor=10, dropout_rate=0, num_classes=640) # it is spectral normalized
+        backbone = layers.Wide_ResNet(depth=28, widen_factor=10, dropout_rate=0, num_classes=640, coeff=self.coeff, domain=2, codomain=2, n_iterations=self.n_lipschitz_iters, atol=self.sn_atol, rtol=self.sn_rtol) # it is spectral normalized
         return 640, backbone
 
     def _build_flow_net(self, input_size):
@@ -148,7 +143,7 @@ class ResidualFlow(nn.Module):
                     learn_p=self.learn_p,
                 )
             )
-            c, h, w = c * 2 if self.factor_out else c * 4, h // 2, w // 2
+            #c, h, w = c * 2 if self.factor_out else c * 4, h // 2, w // 2
         return nn.ModuleList(transforms)
 
     def _calc_n_scale(self, input_size):
@@ -177,34 +172,36 @@ class ResidualFlow(nn.Module):
         return tuple(output_sizes)
 
     def build_multiscale_classifier(self, input_size):
-        n, c, h, w = input_size
-        hidden_shapes = []
-        for i in range(self.n_scale):
-            if i < self.n_scale - 1:
-                c *= 2 if self.factor_out else 4
-                h //= 2
-                w //= 2
-            hidden_shapes.append((n, c, h, w))
+        # n, c, h, w = input_size
+        # hidden_shapes = []
+        # for i in range(self.n_scale):
+        #     if i < self.n_scale - 1:
+        #         c *= 2 if self.factor_out else 4
+        #         h //= 2
+        #         w //= 2
+        #     hidden_shapes.append((n, c, h, w))
 
-        classification_heads = []
-        for i, hshape in enumerate(hidden_shapes):
-            classification_heads.append(
-                nn.Sequential(
-                    nn.Conv2d(hshape[1], self.classification_hdim, 3, 1, 1),
-                    layers.ActNorm2d(self.classification_hdim),
-                    nn.ReLU(inplace=True),
-                    nn.AdaptiveAvgPool2d((1, 1)),
-                )
-            )
-        self.classification_heads = nn.ModuleList(classification_heads)
-        self.logit_layer = nn.Linear(self.classification_hdim * len(classification_heads), self.n_classes)
+        # classification_heads = []
+        # for i, hshape in enumerate(hidden_shapes):
+        #     classification_heads.append(
+        #         nn.Sequential(
+        #             nn.Conv2d(hshape[1], self.classification_hdim, 3, 1, 1),
+        #             layers.ActNorm2d(self.classification_hdim),
+        #             nn.ReLU(inplace=True),
+        #             nn.AdaptiveAvgPool2d((1, 1)),
+        #         )
+        #     )
+        # self.classification_heads = nn.ModuleList(classification_heads)
+        #self.logit_layer = nn.Linear(self.classification_hdim * len(classification_heads), self.n_classes)
+        self.logit_layer = nn.Linear(input_size, self.n_classes)
 
     def forward(self, x, logpx=None, inverse=False, classify=False):
         if inverse:
             return self.inverse(x, logpx)
         x = self.backbone(x)
         out = []
-        if classify: class_outs = []
+        #if classify: class_outs = []
+        if classify: logits = self.logit_layer(x)
         for idx in range(len(self.transforms)):
             if logpx is not None:
                 x, logpx = self.transforms[idx].forward(x, logpx)
@@ -216,18 +213,16 @@ class ResidualFlow(nn.Module):
                 out.append(f)
 
             # Handle classification.
-            if classify:
-                if self.factor_out:
-                    class_outs.append(self.classification_heads[idx](f))
-                else:
-                    class_outs.append(self.classification_heads[idx](x))
+            # if classify:
+            #     if self.factor_out:
+            #         class_outs.append(self.classification_heads[idx](f))
+            #     else:
+            #         class_outs.append(self.classification_heads[idx](x))
 
         out.append(x)
         out = torch.cat([o.view(o.size()[0], -1) for o in out], 1)
         output = out if logpx is None else (out, logpx)
         if classify:
-            h = torch.cat(class_outs, dim=1).squeeze(-1).squeeze(-1)
-            logits = self.logit_layer(h)
             return output, logits
         else:
             return output
@@ -256,7 +251,8 @@ class ResidualFlow(nn.Module):
                     z_prev, logpz = self.transforms[idx].inverse(z_prev, logpz)
                 return z_prev, logpz
         else:
-            z = z.view(z.shape[0], *self.dims[-1])
+            #z = z.view(z.shape[0], *self.dims[-1]) #CHECK self.dims is needed ?
+            z = z.view(z.shape[0], -1)
             for idx in range(len(self.transforms) - 1, -1, -1):
                 if logpz is None:
                     z = self.transforms[idx].inverse(z)
@@ -315,7 +311,7 @@ class StackediResBlocks(layers.SequentialFlow):
 
         def _actnorm(size, fc):
             if fc:
-                return FCWrapper(layers.ActNorm1d(size[0] * size[1] * size[2]))
+                return FCWrapper(layers.ActNorm1d(size))
             else:
                 return layers.ActNorm2d(size[0])
 
@@ -331,13 +327,6 @@ class StackediResBlocks(layers.SequentialFlow):
             return base_layers.get_linear if fc else base_layers.get_conv2d
 
         def _resblock(initial_size, fc, idim=idim, first_resblock=False):
-            ks = list(map(int, kernels.split('-')))
-            if learn_p:
-                _domains = [nn.Parameter(torch.tensor(0.)) for _ in range(len(ks))]
-                _codomains = _domains[1:] + [_domains[0]]
-            else:
-                _domains = domains
-                _codomains = codomains
             if fc:
                 # nnet = FCNet(
                 #         input_shape=initial_size,
@@ -361,20 +350,20 @@ class StackediResBlocks(layers.SequentialFlow):
                     nnet.append(ACT_FNS[activation_fn](False))
                 nnet.append(
                     _lipschitz_layer(fc)(initial_size, idim, coeff=coeff, n_iterations=n_lipschitz_iters,
-                        domain=_domains[0], codomain=_codomains[0], atol=sn_atol, rtol=sn_rtol)
+                        domain=domains[0], codomain=codomains[0], atol=sn_atol, rtol=sn_rtol)
                 )
                 if batchnorm: nnet.append(layers.MovingBatchNorm2d(idim))
                 nnet.append(ACT_FNS[activation_fn](True))
                 nnet.append(
                     _lipschitz_layer(fc)(idim, idim, coeff=coeff, n_iterations=n_lipschitz_iters,
-                            domain=_domains[i + 1], codomain=_codomains[i + 1], atol=sn_atol, rtol=sn_rtol)
+                            domain=domains[1], codomain=codomains[1], atol=sn_atol, rtol=sn_rtol)
                 )
                 if batchnorm: nnet.append(layers.MovingBatchNorm2d(idim))
                 nnet.append(ACT_FNS[activation_fn](True))
                 if dropout: nnet.append(nn.Dropout2d(dropout, inplace=True))
                 nnet.append(
                     _lipschitz_layer(fc)(idim, initial_size, coeff=coeff, n_iterations=n_lipschitz_iters,
-                        domain=_domains[-1], codomain=_codomains[-1], atol=sn_atol, rtol=sn_rtol)
+                        domain=domains[2], codomain=codomains[2], atol=sn_atol, rtol=sn_rtol)
                 )
                 if batchnorm: nnet.append(layers.MovingBatchNorm2d(initial_size[0]))
 
@@ -388,6 +377,13 @@ class StackediResBlocks(layers.SequentialFlow):
                     grad_in_forward=grad_in_forward,
                 )
             else:
+                ks = list(map(int, kernels.split('-')))
+                if learn_p:
+                    _domains = [nn.Parameter(torch.tensor(0.)) for _ in range(len(ks))]
+                    _codomains = _domains[1:] + [_domains[0]]
+                else:
+                    _domains = domains
+                    _codomains = codomains
                 nnet = []
                 if not first_resblock and preact:
                     if batchnorm: nnet.append(layers.MovingBatchNorm2d(initial_size[0]))

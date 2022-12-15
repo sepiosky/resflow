@@ -25,14 +25,14 @@ def get_logger(logpath, filepath, package_files=[], displaying=True, saving=True
         console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
         logger.addHandler(console_handler)
-    logger.info(filepath)
-    with open(filepath, "r") as f:
-        logger.info(f.read())
+    # logger.info(filepath)
+    # with open(filepath, "r") as f:
+    #    logger.info(f.read())
 
-    for f in package_files:
-        logger.info(f)
-        with open(f, "r") as package_f:
-            logger.info(package_f.read())
+    # for f in package_files:
+    #     logger.info(f)
+    #     with open(f, "r") as package_f:
+    #         logger.info(package_f.read())
 
     return logger
 

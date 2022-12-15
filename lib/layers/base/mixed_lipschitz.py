@@ -1,4 +1,4 @@
-from torch._six import container_abcs
+import collections.abc as container_abcs
 from itertools import repeat
 import math
 import torch
@@ -201,7 +201,7 @@ class InducedNormConv2d(nn.Module):
                 self.v.resize_(self.in_channels).normal_(0, 1)
                 self.v.copy_(normalize_v(self.v, domain))
             else:
-                c, h, w = self.in_channels, int(self.spatial_dims[0].item()), int(self.spatial_dims[1].item())
+                c, h, w = self.in_channels, int(self.spatial_dims[0].item())-self.stride[0]+1, int(self.spatial_dims[1].item())-self.stride[1]+1 #CHECK for adding stride
                 with torch.no_grad():
                     num_input_dim = c * h * w
                     self.v.resize_(num_input_dim).normal_(0, 1)
@@ -336,7 +336,7 @@ class InducedNormConv2d(nn.Module):
         u = self.u
         v = self.v
         weight = self.weight
-        c, h, w = self.in_channels, int(self.spatial_dims[0].item()), int(self.spatial_dims[1].item())
+        c, h, w = self.in_channels, int(self.spatial_dims[0].item())-self.stride[0]+1, int(self.spatial_dims[1].item())-self.stride[1]+1 #CHECK for adding stride
         if update:
             with torch.no_grad():
                 domain, codomain = self.compute_domain_codomain()
@@ -348,7 +348,6 @@ class InducedNormConv2d(nn.Module):
                     u_s = F.conv2d(v.view(1, c, h, w), weight, stride=self.stride, padding=self.padding, bias=None)
                     out_shape = u_s.shape
                     u = normalize_u(u_s.view(-1), codomain, out=u)
-
                     v_s = F.conv_transpose2d(
                         u.view(out_shape), weight, stride=self.stride, padding=self.padding, output_padding=0
                     )
@@ -387,9 +386,9 @@ class InducedNormConv2d(nn.Module):
 
     def extra_repr(self):
         domain, codomain = self.compute_domain_codomain()
-        s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}' ', stride={stride}')
+        s = (f'{self.in_channels}, {self.out_channels}, kernel_size={self.kernel_size}, stride={self.stride}')
         if self.padding != (0,) * len(self.padding):
-            s += ', padding={padding}'
+            s += f', padding={self.padding}'
         if self.bias is None:
             s += ', bias=False'
         s += ', coeff={}, domain={:.2f}, codomain={:.2f}, n_iters={}, atol={}, rtol={}, learnable_ord={}'.format(
